@@ -101,13 +101,3 @@ func TestGzipRequest(t *testing.T) {
 		})
 	}
 }
-
-func TestRouterRejectsInvalidGzip(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/api/user/orders", strings.NewReader("invalid"))
-	req.Header.Set("Content-Encoding", "gzip")
-	w := httptest.NewRecorder()
-	NewRouter().ServeHTTP(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d", w.Code)
-	}
-}

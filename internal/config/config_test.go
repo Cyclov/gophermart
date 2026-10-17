@@ -8,6 +8,7 @@ import (
 )
 
 func TestLoad(t *testing.T) {
+	t.Setenv("JWT_SECRET", strings.Repeat("s", 32))
 	tests := []struct {
 		name    string
 		vars    map[string]string
@@ -15,11 +16,11 @@ func TestLoad(t *testing.T) {
 		want    Config
 		wantErr string
 	}{
-		{name: "defaults", vars: map[string]string{"DATABASE_DSN": "db", "ACCRUAL_SYSTEM_ADDRESS": "http://localhost:8081"}, want: Config{"localhost:8080", "db", "http://localhost:8081"}},
-		{name: "environment", vars: map[string]string{"RUN_ADDRESS": ":9000", "DATABASE_DSN": "env-db", "ACCRUAL_SYSTEM_ADDRESS": "https://env.example"}, want: Config{":9000", "env-db", "https://env.example"}},
-		{name: "flags only", args: []string{"-a", ":9001", "-d", "flag-db", "-r", "http://flag.example"}, want: Config{":9001", "flag-db", "http://flag.example"}},
-		{name: "flags win", vars: map[string]string{"RUN_ADDRESS": "bad", "DATABASE_DSN": "env-db", "ACCRUAL_SYSTEM_ADDRESS": "bad"}, args: []string{"-a", ":9002", "-d", "flag-db", "-r", "https://flag.example"}, want: Config{":9002", "flag-db", "https://flag.example"}},
-		{name: "partial override", vars: map[string]string{"RUN_ADDRESS": ":9000", "DATABASE_DSN": "env-db", "ACCRUAL_SYSTEM_ADDRESS": "http://env.example"}, args: []string{"-a", ":9003"}, want: Config{":9003", "env-db", "http://env.example"}},
+		{name: "defaults", vars: map[string]string{"DATABASE_DSN": "db", "ACCRUAL_SYSTEM_ADDRESS": "http://localhost:8081"}, want: Config{strings.Repeat("s", 32), "localhost:8080", "db", "http://localhost:8081"}},
+		{name: "environment", vars: map[string]string{"RUN_ADDRESS": ":9000", "DATABASE_DSN": "env-db", "ACCRUAL_SYSTEM_ADDRESS": "https://env.example"}, want: Config{strings.Repeat("s", 32), ":9000", "env-db", "https://env.example"}},
+		{name: "flags only", args: []string{"-a", ":9001", "-d", "flag-db", "-r", "http://flag.example"}, want: Config{strings.Repeat("s", 32), ":9001", "flag-db", "http://flag.example"}},
+		{name: "flags win", vars: map[string]string{"RUN_ADDRESS": "bad", "DATABASE_DSN": "env-db", "ACCRUAL_SYSTEM_ADDRESS": "bad"}, args: []string{"-a", ":9002", "-d", "flag-db", "-r", "https://flag.example"}, want: Config{strings.Repeat("s", 32), ":9002", "flag-db", "https://flag.example"}},
+		{name: "partial override", vars: map[string]string{"RUN_ADDRESS": ":9000", "DATABASE_DSN": "env-db", "ACCRUAL_SYSTEM_ADDRESS": "http://env.example"}, args: []string{"-a", ":9003"}, want: Config{strings.Repeat("s", 32), ":9003", "env-db", "http://env.example"}},
 		{name: "missing database", wantErr: "DATABASE_DSN"},
 		{name: "missing accrual", args: []string{"-d", "db"}, wantErr: "ACCRUAL_SYSTEM_ADDRESS"},
 		{name: "empty explicit flag", vars: map[string]string{"DATABASE_DSN": "env-db"}, args: []string{"-d="}, wantErr: "DATABASE_DSN"},
@@ -62,6 +63,19 @@ func TestLoadHelp(t *testing.T) {
 		_, err := Load([]string{arg})
 		if !errors.Is(err, flag.ErrHelp) {
 			t.Fatalf("%s: got %v", arg, err)
+		}
+	}
+}
+
+func TestJWTSecret(t *testing.T) {
+	t.Setenv("DATABASE_DSN", "db")
+	t.Setenv("RUN_ADDRESS", ":8080")
+	t.Setenv("ACCRUAL_SYSTEM_ADDRESS", "http://localhost:8081")
+	for _, secret := range []string{"", "short"} {
+		t.Setenv("JWT_SECRET", secret)
+		_, err := Load(nil)
+		if err == nil || !strings.Contains(err.Error(), "JWT_SECRET") {
+			t.Fatal("invalid secret accepted")
 		}
 	}
 }

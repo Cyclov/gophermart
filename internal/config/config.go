@@ -13,6 +13,7 @@ import (
 )
 
 type Config struct {
+	JWTSecret  string `env:"JWT_SECRET"`
 	Addr       string `env:"RUN_ADDRESS" envDefault:"localhost:8080"`
 	DBDSN      string `env:"DATABASE_DSN"`
 	AccrualURL string `env:"ACCRUAL_SYSTEM_ADDRESS"`
@@ -39,6 +40,9 @@ func Load(args []string) (Config, error) {
 	}
 	if err := cfg.validate(); err != nil {
 		return Config{}, err
+	}
+	if len(cfg.JWTSecret) < 32 {
+		return Config{}, errors.New("JWT_SECRET must contain at least 32 bytes")
 	}
 	return cfg, nil
 }

@@ -10,9 +10,11 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/Cyclov/gophermart/internal/auth"
 	"github.com/Cyclov/gophermart/internal/config"
 	"github.com/Cyclov/gophermart/internal/handler"
 	"github.com/Cyclov/gophermart/internal/server"
+	"github.com/Cyclov/gophermart/internal/service"
 	"github.com/Cyclov/gophermart/internal/storage"
 )
 
@@ -31,9 +33,14 @@ func run(logger *slog.Logger) error {
 		fmt.Println("Priority: explicit flag > environment > default")
 		fmt.Println("-a: RUN_ADDRESS (default localhost:8080)")
 		fmt.Println("-d: DATABASE_DSN (required)")
+		fmt.Println("JWT_SECRET: required environment variable (at least 32 bytes)")
 		fmt.Println("-r: ACCRUAL_SYSTEM_ADDRESS (required HTTP or HTTPS URL)")
 		return nil
 	}
+	if err != nil {
+		return err
+	}
+	tokens, err := auth.New(cfg.JWTSecret)
 	if err != nil {
 		return err
 	}
@@ -45,5 +52,5 @@ func run(logger *slog.Logger) error {
 	}
 	defer pool.Close()
 	logger.Info("database connected and migrations applied")
-	return server.Run(ctx, cfg.Addr, handler.NewRouter(), logger)
+	return server.Run(ctx, cfg.Addr, handler.NewRouter(service.NewAuth(storage.NewUsers(pool), tokens), tokens), logger)
 }
