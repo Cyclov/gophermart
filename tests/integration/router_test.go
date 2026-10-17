@@ -10,7 +10,7 @@ import (
 )
 
 func TestRouterIntegration(t *testing.T) {
-	r := handler.NewRouter(nil, nil, nil)
+	r := handler.NewRouter(nil, nil, nil, nil)
 	for _, tt := range []struct {
 		method, path string
 		status       int
@@ -39,7 +39,7 @@ func TestRouterRejectsInvalidGzip(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/user/orders", strings.NewReader("invalid"))
 	req.Header.Set("Content-Encoding", "gzip")
 	w := httptest.NewRecorder()
-	handler.NewRouter(nil, nil, nil).ServeHTTP(w, req)
+	handler.NewRouter(nil, nil, nil, nil).ServeHTTP(w, req)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d", w.Code)
 	}

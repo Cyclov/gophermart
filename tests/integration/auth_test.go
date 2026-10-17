@@ -19,7 +19,7 @@ func TestAuthIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	router := handler.NewRouter(service.NewAuth(storage.NewUsers(pool), tokens), tokens, service.NewOrders(storage.NewOrders(pool)))
+	router := handler.NewRouter(service.NewAuth(storage.NewUsers(pool), tokens), tokens, service.NewOrders(storage.NewOrders(pool)), service.NewBalances(storage.NewBalances(pool)))
 	request := func(path, body string, cookie *http.Cookie) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
 		if path == "/api/user/orders" {
@@ -76,12 +76,12 @@ func TestAuthIntegration(t *testing.T) {
 		t.Fatal("account missing")
 	}
 	restartedTokens, _ := auth.New(strings.Repeat("test-key", 8))
-	restarted := handler.NewRouter(service.NewAuth(storage.NewUsers(pool), restartedTokens), restartedTokens, service.NewOrders(storage.NewOrders(pool)))
+	restarted := handler.NewRouter(service.NewAuth(storage.NewUsers(pool), restartedTokens), restartedTokens, service.NewOrders(storage.NewOrders(pool)), service.NewBalances(storage.NewBalances(pool)))
 	req := httptest.NewRequest(http.MethodGet, "/api/user/balance", nil)
 	req.AddCookie(cookie)
 	w := httptest.NewRecorder()
 	restarted.ServeHTTP(w, req)
-	if w.Code != 501 {
+	if w.Code != 200 {
 		t.Fatal("session did not survive service recreation")
 	}
 

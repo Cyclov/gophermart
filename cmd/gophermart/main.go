@@ -59,7 +59,7 @@ func run(logger *slog.Logger) error {
 	defer cancelWorker()
 	workerDone := make(chan struct{})
 	go func() { defer close(workerDone); worker.Run(workerCtx) }()
-	err = server.Run(ctx, cfg.Addr, handler.NewRouter(service.NewAuth(storage.NewUsers(pool), tokens), tokens, service.NewOrders(orders)), logger)
+	err = server.Run(ctx, cfg.Addr, handler.NewRouter(service.NewAuth(storage.NewUsers(pool), tokens), tokens, service.NewOrders(orders), service.NewBalances(storage.NewBalances(pool))), logger)
 	cancelWorker()
 	<-workerDone
 	return err

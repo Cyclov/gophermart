@@ -6,7 +6,7 @@ import (
 	"net/http"
 )
 
-func NewRouter(service AuthService, tokens *auth.Tokens, orders OrderService) http.Handler {
+func NewRouter(service AuthService, tokens *auth.Tokens, orders OrderService, balances BalanceService) http.Handler {
 	r := chi.NewRouter()
 	r.Use(GzipMiddleware)
 	r.Route("/api/user", func(r chi.Router) {
@@ -16,14 +16,10 @@ func NewRouter(service AuthService, tokens *auth.Tokens, orders OrderService) ht
 			r.Use(tokens.Middleware)
 			r.Post("/orders", uploadOrder(orders))
 			r.Get("/orders", listOrders(orders))
-			r.Get("/balance", notImplemented)
-			r.Post("/balance/withdraw", notImplemented)
-			r.Get("/withdrawals", notImplemented)
+			r.Get("/balance", getBalance(balances))
+			r.Post("/balance/withdraw", withdraw(balances))
+			r.Get("/withdrawals", listWithdrawals(balances))
 		})
 	})
 	return r
-}
-
-func notImplemented(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, "not implemented", http.StatusNotImplemented)
 }
