@@ -28,7 +28,7 @@ jobs:
           go-version-file: go.mod
       - name: Unit tests and coverage
         run: |
-          go test ./internal/... ./cmd/... ./migrations/... -coverprofile=unit.cover.out
+          go test -race ./internal/... ./cmd/... ./migrations/... -coverprofile=unit.cover.out
           go tool cover -func=unit.cover.out
           go tool cover -func=unit.cover.out | awk '/total:/ {gsub(/%/, "", $3); if ($3 < 60) exit 1}'
       - name: Integration tests

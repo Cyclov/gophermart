@@ -35,6 +35,7 @@ func run(logger *slog.Logger) error {
 		fmt.Println("-a: RUN_ADDRESS (default localhost:8080)")
 		fmt.Println("-d: DATABASE_DSN (required)")
 		fmt.Println("JWT_SECRET: required environment variable (at least 32 bytes)")
+		fmt.Println("ACCRUAL_WORKERS: parallel accrual requests (1..32, default 4)")
 		fmt.Println("-r: ACCRUAL_SYSTEM_ADDRESS (required HTTP or HTTPS URL)")
 		return nil
 	}
@@ -54,7 +55,7 @@ func run(logger *slog.Logger) error {
 	defer pool.Close()
 	logger.Info("database connected and migrations applied")
 	orders := storage.NewOrders(pool)
-	worker := accrual.NewWorker(orders, accrual.NewClient(cfg.AccrualURL), logger)
+	worker := accrual.NewWorker(orders, accrual.NewClient(cfg.AccrualURL), logger, cfg.AccrualWorkers)
 	workerCtx, cancelWorker := context.WithCancel(ctx)
 	defer cancelWorker()
 	workerDone := make(chan struct{})

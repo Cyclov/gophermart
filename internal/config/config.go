@@ -14,10 +14,11 @@ import (
 )
 
 type Config struct {
-	JWTSecret  string `env:"JWT_SECRET"`
-	Addr       string `env:"RUN_ADDRESS" envDefault:"localhost:8080"`
-	DBDSN      string `env:"DATABASE_DSN"`
-	AccrualURL string `env:"ACCRUAL_SYSTEM_ADDRESS"`
+	JWTSecret      string `env:"JWT_SECRET"`
+	Addr           string `env:"RUN_ADDRESS" envDefault:"localhost:8080"`
+	DBDSN          string `env:"DATABASE_DSN"`
+	AccrualURL     string `env:"ACCRUAL_SYSTEM_ADDRESS"`
+	AccrualWorkers int    `env:"ACCRUAL_WORKERS" envDefault:"4"`
 }
 
 func Load(args []string) (Config, error) {
@@ -52,6 +53,9 @@ func Load(args []string) (Config, error) {
 }
 
 func (cfg Config) validate() error {
+	if cfg.AccrualWorkers < 1 || cfg.AccrualWorkers > 32 {
+		return errors.New("ACCRUAL_WORKERS must be between 1 and 32")
+	}
 	_, port, err := net.SplitHostPort(cfg.Addr)
 	if err != nil {
 		return errors.New("RUN_ADDRESS (-a) must be host:port")

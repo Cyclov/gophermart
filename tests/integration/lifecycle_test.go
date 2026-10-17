@@ -89,7 +89,7 @@ func TestFullLifecycleIntegration(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		accrual.NewWorker(storage.NewOrders(pool), accrual.NewClient(external.URL), logger).Run(workerCtx)
+		accrual.NewWorker(storage.NewOrders(pool), accrual.NewClient(external.URL), logger, 4).Run(workerCtx)
 	}()
 	deadline := time.Now().Add(5 * time.Second)
 	for calls.Load() < 2 && time.Now().Before(deadline) {
@@ -113,7 +113,7 @@ func TestFullLifecycleIntegration(t *testing.T) {
 	done = make(chan struct{})
 	go func() {
 		defer close(done)
-		accrual.NewWorker(storage.NewOrders(restarted), accrual.NewClient(external.URL), logger).Run(workerCtx)
+		accrual.NewWorker(storage.NewOrders(restarted), accrual.NewClient(external.URL), logger, 4).Run(workerCtx)
 	}()
 	t.Cleanup(func() {
 		cancel()
