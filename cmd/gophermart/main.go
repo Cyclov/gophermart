@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/Cyclov/gophermart/internal/accrual"
 	"github.com/Cyclov/gophermart/internal/auth"
 	"github.com/Cyclov/gophermart/internal/config"
 	"github.com/Cyclov/gophermart/internal/handler"
@@ -52,5 +53,14 @@ func run(logger *slog.Logger) error {
 	}
 	defer pool.Close()
 	logger.Info("database connected and migrations applied")
-	return server.Run(ctx, cfg.Addr, handler.NewRouter(service.NewAuth(storage.NewUsers(pool), tokens), tokens, service.NewOrders(storage.NewOrders(pool))), logger)
+	orders := storage.NewOrders(pool)
+	worker := accrual.NewWorker(orders, accrual.NewClient(cfg.AccrualURL), logger)
+	workerCtx, cancelWorker := context.WithCancel(ctx)
+	defer cancelWorker()
+	workerDone := make(chan struct{})
+	go func() { defer close(workerDone); worker.Run(workerCtx) }()
+	err = server.Run(ctx, cfg.Addr, handler.NewRouter(service.NewAuth(storage.NewUsers(pool), tokens), tokens, service.NewOrders(orders)), logger)
+	cancelWorker()
+	<-workerDone
+	return err
 }
