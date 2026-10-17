@@ -8,6 +8,7 @@ import (
 )
 
 func TestLoad(t *testing.T) {
+	t.Setenv("DATABASE_URI", "")
 	t.Setenv("JWT_SECRET", strings.Repeat("s", 32))
 	tests := []struct {
 		name    string
@@ -77,5 +78,26 @@ func TestJWTSecret(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "JWT_SECRET") {
 			t.Fatal("invalid secret accepted")
 		}
+	}
+}
+
+func TestDatabaseURIAlias(t *testing.T) {
+	t.Setenv("JWT_SECRET", strings.Repeat("s", 32))
+	t.Setenv("RUN_ADDRESS", ":8080")
+	t.Setenv("ACCRUAL_SYSTEM_ADDRESS", "http://localhost:8081")
+	t.Setenv("DATABASE_DSN", "")
+	t.Setenv("DATABASE_URI", "legacy-db")
+	cfg, err := Load(nil)
+	if err != nil || cfg.DBDSN != "legacy-db" {
+		t.Fatal("legacy URI ignored")
+	}
+	t.Setenv("DATABASE_DSN", "preferred-db")
+	cfg, err = Load(nil)
+	if err != nil || cfg.DBDSN != "preferred-db" {
+		t.Fatal("DSN must override URI")
+	}
+	cfg, err = Load([]string{"-d", "flag-db"})
+	if err != nil || cfg.DBDSN != "flag-db" {
+		t.Fatal("flag must override environment")
 	}
 }

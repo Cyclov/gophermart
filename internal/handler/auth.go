@@ -27,12 +27,12 @@ func authEndpoint(auth AuthService, register bool) http.HandlerFunc {
 		r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 		decoder := json.NewDecoder(r.Body)
 		if err := decoder.Decode(&input); err != nil {
-			http.Error(w, "invalid request", 400)
+			http.Error(w, "invalid request", http.StatusBadRequest)
 			return
 		}
 		var extra any
 		if err := decoder.Decode(&extra); err != io.EOF || strings.TrimSpace(input.Login) == "" || input.Password == "" {
-			http.Error(w, "invalid request", 400)
+			http.Error(w, "invalid request", http.StatusBadRequest)
 			return
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
@@ -45,15 +45,15 @@ func authEndpoint(auth AuthService, register bool) http.HandlerFunc {
 			token, err = auth.Login(ctx, input.Login, input.Password)
 		}
 		if errors.Is(err, service.ErrLoginTaken) {
-			http.Error(w, "login already taken", 409)
+			http.Error(w, "login already taken", http.StatusConflict)
 			return
 		}
 		if errors.Is(err, service.ErrCredentials) {
-			http.Error(w, "invalid credentials", 401)
+			http.Error(w, "invalid credentials", http.StatusUnauthorized)
 			return
 		}
 		if err != nil {
-			http.Error(w, "internal server error", 500)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
 		http.SetCookie(w, &http.Cookie{Name: "session", Value: token, Path: "/", HttpOnly: true, Secure: r.TLS != nil, SameSite: http.SameSiteLaxMode, MaxAge: 86400, Expires: time.Now().Add(authjwt.TTL)})

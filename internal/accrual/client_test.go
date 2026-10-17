@@ -1,7 +1,11 @@
 package accrual
 
 import (
+	"context"
 	"errors"
+	"io"
+	"net/http"
+	"strings"
 	"testing"
 	"time"
 )
@@ -39,5 +43,73 @@ func TestRetryAfter(t *testing.T) {
 		if got := retryAfter(tt.value, now); got != tt.want {
 			t.Errorf("%s: %v", tt.value, got)
 		}
+	}
+}
+
+type transportFunc func(*http.Request) (*http.Response, error)
+
+func (f transportFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+type trackedBody struct {
+	io.Reader
+	closed bool
+}
+
+func (b *trackedBody) Close() error { b.closed = true; return nil }
+
+type brokenBody struct{}
+
+func (brokenBody) Read([]byte) (int, error) { return 0, io.ErrUnexpectedEOF }
+
+func TestClientGet(t *testing.T) {
+	for _, tt := range []struct {
+		name            string
+		status          int
+		body            string
+		network, broken bool
+		want            error
+	}{
+		{"success", 200, `{"order":"123","status":"PROCESSED","accrual":1.25}`, false, false, nil},
+		{"pending", 204, "", false, false, ErrPending},
+		{"rate limit", 429, "", false, false, nil},
+		{"server error", 500, "", false, false, ErrTemporary},
+		{"invalid json", 200, `broken`, false, false, ErrResponse},
+		{"oversized", 200, strings.Repeat("x", (1<<20)+1), false, false, ErrResponse},
+		{"read failure", 200, "", false, true, ErrTemporary},
+		{"network", 0, "", true, false, ErrTemporary},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			client := NewClient("http://accrual.example")
+			body := &trackedBody{Reader: strings.NewReader(tt.body)}
+			if tt.broken {
+				body.Reader = brokenBody{}
+			}
+			client.http.SetTransport(transportFunc(func(r *http.Request) (*http.Response, error) {
+				if r.Method != "GET" || r.URL.Path != "/api/orders/123" {
+					t.Fatal("incorrect upstream request")
+				}
+				if tt.network {
+					return nil, errors.New("network failure")
+				}
+				header := make(http.Header)
+				header.Set("Retry-After", "5")
+				return &http.Response{StatusCode: tt.status, Header: header, Body: body, Request: r}, nil
+			}))
+			result, err := client.Get(context.Background(), "123")
+			if tt.status == 429 {
+				var rate *RateLimitError
+				if !errors.As(err, &rate) || rate.Delay != 5*time.Second {
+					t.Fatal("missing rate limit")
+				}
+			} else if !errors.Is(err, tt.want) {
+				t.Fatalf("%v, want %v", err, tt.want)
+			}
+			if !tt.network && !body.closed {
+				t.Fatal("response body was not closed")
+			}
+			if tt.name == "success" && (result.Amount == nil || result.Amount.String() != "1.25") {
+				t.Fatal("incorrect response")
+			}
+		})
 	}
 }

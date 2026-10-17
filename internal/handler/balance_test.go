@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -54,5 +55,39 @@ func TestWithdrawalResponse(t *testing.T) {
 				t.Fatal("wrong identity")
 			}
 		})
+	}
+}
+
+func TestBalanceReadResponses(t *testing.T) {
+	for _, err := range []error{nil, errors.New("failed")} {
+		s := &balancesStub{err: err}
+		w := httptest.NewRecorder()
+		balanceResponse(s, 42, w, httptest.NewRequest("GET", "/", nil))
+		want := 200
+		if err != nil {
+			want = 500
+		}
+		if w.Code != want {
+			t.Fatalf("balance: %d", w.Code)
+		}
+		w = httptest.NewRecorder()
+		historyResponse(s, 42, w, httptest.NewRequest("GET", "/", nil))
+		want = 204
+		if err != nil {
+			want = 500
+		}
+		if w.Code != want {
+			t.Fatalf("history: %d", w.Code)
+		}
+	}
+}
+
+func TestBalanceHandlersRejectMissingIdentity(t *testing.T) {
+	for _, h := range []http.HandlerFunc{getBalance(nil), withdraw(nil), listWithdrawals(nil)} {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest("GET", "/", nil))
+		if w.Code != http.StatusUnauthorized {
+			t.Fatal("missing identity accepted")
+		}
 	}
 }

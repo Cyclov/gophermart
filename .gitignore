@@ -25,3 +25,4 @@ vendor/
 *.md
 !/README.md
 !/SPECIFICATION.md
+/.test-bin/

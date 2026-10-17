@@ -24,68 +24,72 @@ func uploadOrder(orders OrderService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, ok := auth.UserID(r.Context())
 		if !ok {
-			http.Error(w, "unauthorized", 401)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		kind, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
-		if err != nil || kind != "text/plain" {
-			http.Error(w, "expected text/plain", 400)
-			return
-		}
-		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 64<<10))
-		if err != nil {
-			http.Error(w, "invalid request body", 400)
-			return
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-		added, err := orders.Upload(ctx, id, strings.TrimSpace(string(body)))
-		switch {
-		case errors.Is(err, service.ErrOrderFormat):
-			http.Error(w, "invalid order format", 400)
-		case errors.Is(err, service.ErrOrderNumber):
-			http.Error(w, "invalid order number", 422)
-		case errors.Is(err, service.ErrOrderOwner):
-			http.Error(w, "order already uploaded by another user", 409)
-		case err != nil:
-			http.Error(w, "internal server error", 500)
-		case added:
-			w.WriteHeader(202)
-		default:
-			w.WriteHeader(200)
-		}
+		uploadOrderResponse(orders, id, w, r)
 	}
 }
-
+func uploadOrderResponse(orders OrderService, id int64, w http.ResponseWriter, r *http.Request) {
+	kind, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || kind != "text/plain" {
+		http.Error(w, "expected text/plain", http.StatusBadRequest)
+		return
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 64<<10))
+	if err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	added, err := orders.Upload(ctx, id, strings.TrimSpace(string(body)))
+	switch {
+	case errors.Is(err, service.ErrOrderFormat):
+		http.Error(w, "invalid order format", http.StatusBadRequest)
+	case errors.Is(err, service.ErrOrderNumber):
+		http.Error(w, "invalid order number", http.StatusUnprocessableEntity)
+	case errors.Is(err, service.ErrOrderOwner):
+		http.Error(w, "order already uploaded by another user", http.StatusConflict)
+	case err != nil:
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+	case added:
+		w.WriteHeader(http.StatusAccepted)
+	default:
+		w.WriteHeader(http.StatusOK)
+	}
+}
 func listOrders(orders OrderService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, ok := auth.UserID(r.Context())
 		if !ok {
-			http.Error(w, "unauthorized", 401)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-		result, err := orders.List(ctx, id)
-		if err != nil {
-			http.Error(w, "internal server error", 500)
-			return
-		}
-		if len(result) == 0 {
-			w.WriteHeader(204)
-			return
-		}
-		writeJSON(w, result)
+		listOrdersResponse(orders, id, w, r)
 	}
 }
-
+func listOrdersResponse(orders OrderService, id int64, w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	result, err := orders.List(ctx, id)
+	if err != nil {
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+	if len(result) == 0 {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	writeJSON(w, result)
+}
 func writeJSON(w http.ResponseWriter, value any) {
 	body, err := json.Marshal(value)
 	if err != nil {
-		http.Error(w, "internal server error", 500)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
+	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(body)
 }

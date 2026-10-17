@@ -19,7 +19,7 @@ func (t *Tokens) Middleware(next http.Handler) http.Handler {
 		if header := r.Header.Get("Authorization"); header != "" {
 			parts := strings.Fields(header)
 			if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-				http.Error(w, "unauthorized", 401)
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
 			raw = parts[1]
@@ -28,7 +28,7 @@ func (t *Tokens) Middleware(next http.Handler) http.Handler {
 		}
 		id, err := t.Parse(raw)
 		if err != nil {
-			http.Error(w, "unauthorized", 401)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userIDKey{}, id)))

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 
@@ -23,6 +24,9 @@ func Load(args []string) (Config, error) {
 	var cfg Config
 	if err := env.Parse(&cfg); err != nil {
 		return Config{}, errors.New("cannot parse configuration environment")
+	}
+	if cfg.DBDSN == "" {
+		cfg.DBDSN = os.Getenv("DATABASE_URI")
 	}
 	fs := flag.NewFlagSet("gophermart", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)

@@ -83,3 +83,34 @@ func TestWorkerCancellation(t *testing.T) {
 		t.Fatal("cancelled worker fetched orders")
 	}
 }
+
+type cancelFetcher struct {
+	cancel context.CancelFunc
+	calls  int
+}
+
+func (f *cancelFetcher) Get(ctx context.Context, n string) (model.Accrual, error) {
+	f.calls++
+	if f.calls == 2 {
+		f.cancel()
+	}
+	return model.Accrual{}, ErrPending
+}
+func TestWorkerRunStopsBetweenPolls(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	q := &queueStub{numbers: []string{"123"}}
+	f := &cancelFetcher{cancel: cancel}
+	w := NewWorker(q, f, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	w.interval = time.Millisecond
+	done := make(chan struct{})
+	go func() { defer close(done); w.Run(ctx) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("worker did not stop")
+	}
+	if f.calls != 2 || q.retries != 2 {
+		t.Fatal("unexpected polling lifecycle")
+	}
+}

@@ -101,3 +101,49 @@ func TestGzipRequest(t *testing.T) {
 		})
 	}
 }
+
+func TestGzipNegotiation(t *testing.T) {
+	for _, tt := range []struct {
+		header string
+		want   bool
+	}{{"gzip", true}, {"br, gzip;q=0.5", true}, {"gzip;q=0", false}, {"*;q=1", true}, {"*;q=1,gzip;q=0", false}, {"xgzip", false}, {"gzip;q=bad", false}, {"", false}} {
+		if got := acceptsGzip(tt.header); got != tt.want {
+			t.Errorf("%s: %v", tt.header, got)
+		}
+	}
+}
+func TestGzipImplicitHeaderAndEmptyResponse(t *testing.T) {
+	for _, status := range []int{200, 204, 304} {
+		h := GzipMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			if status == 200 {
+				_, _ = w.Write([]byte(`{}`))
+				w.WriteHeader(500)
+			} else {
+				w.WriteHeader(status)
+			}
+		}))
+		req := httptest.NewRequest("GET", "/", nil)
+		req.Header.Set("Accept-Encoding", "gzip")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		if w.Code != status {
+			t.Fatal("status overwritten")
+		}
+		if status != 200 {
+			if w.Body.Len() != 0 || w.Header().Get("Content-Encoding") != "" {
+				t.Fatal("compressed empty response")
+			}
+			continue
+		}
+		reader, err := gzip.NewReader(w.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		decoded, err := io.ReadAll(reader)
+		reader.Close()
+		if err != nil || string(decoded) != "{}" {
+			t.Fatal("implicit header response broken")
+		}
+	}
+}
