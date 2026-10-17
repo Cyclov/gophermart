@@ -19,10 +19,14 @@ func TestAuthIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	router := handler.NewRouter(service.NewAuth(storage.NewUsers(pool), tokens), tokens)
+	router := handler.NewRouter(service.NewAuth(storage.NewUsers(pool), tokens), tokens, service.NewOrders(storage.NewOrders(pool)))
 	request := func(path, body string, cookie *http.Cookie) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
+		if path == "/api/user/orders" {
+			req.Header.Set("Content-Type", "text/plain")
+		} else {
+			req.Header.Set("Content-Type", "application/json")
+		}
 		if cookie != nil {
 			req.AddCookie(cookie)
 		}
@@ -39,7 +43,7 @@ func TestAuthIntegration(t *testing.T) {
 		t.Fatal("missing session cookie")
 	}
 	cookie := cookies[0]
-	if response := request("/api/user/orders", "123", cookie); response.Code != 501 {
+	if response := request("/api/user/orders", "12345678903", cookie); response.Code != 202 {
 		t.Fatalf("automatic authentication: %d", response.Code)
 	}
 	for _, tt := range []struct {
@@ -72,7 +76,7 @@ func TestAuthIntegration(t *testing.T) {
 		t.Fatal("account missing")
 	}
 	restartedTokens, _ := auth.New(strings.Repeat("test-key", 8))
-	restarted := handler.NewRouter(service.NewAuth(storage.NewUsers(pool), restartedTokens), restartedTokens)
+	restarted := handler.NewRouter(service.NewAuth(storage.NewUsers(pool), restartedTokens), restartedTokens, service.NewOrders(storage.NewOrders(pool)))
 	req := httptest.NewRequest(http.MethodGet, "/api/user/balance", nil)
 	req.AddCookie(cookie)
 	w := httptest.NewRecorder()

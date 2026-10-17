@@ -3,6 +3,7 @@ package integration
 import (
 	"context"
 	"crypto/rand"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -41,17 +42,27 @@ func testDatabase(t *testing.T) (context.Context, *pgxpool.Pool, string) {
 			t.Error("cannot remove test schema")
 		}
 	})
-	cfg, err := pgxpool.ParseConfig(dsn)
+	_, err = pgxpool.ParseConfig(dsn)
 	if err != nil {
 		t.Fatal("invalid test DSN")
 	}
-	cfg.ConnConfig.RuntimeParams["search_path"] = schema
-	pool, err := storage.Connect(ctx, cfg.ConnString())
+	isolatedDSN := dsn + " search_path=" + schema
+	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
+		u, err := url.Parse(dsn)
+		if err != nil {
+			t.Fatal("invalid test URL")
+		}
+		q := u.Query()
+		q.Set("search_path", schema)
+		u.RawQuery = q.Encode()
+		isolatedDSN = u.String()
+	}
+	pool, err := storage.Connect(ctx, isolatedDSN)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
-	return ctx, pool, cfg.ConnString()
+	return ctx, pool, isolatedDSN
 }
 
 func TestPostgresIntegration(t *testing.T) {

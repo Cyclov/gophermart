@@ -52,5 +52,5 @@ func run(logger *slog.Logger) error {
 	}
 	defer pool.Close()
 	logger.Info("database connected and migrations applied")
-	return server.Run(ctx, cfg.Addr, handler.NewRouter(service.NewAuth(storage.NewUsers(pool), tokens), tokens), logger)
+	return server.Run(ctx, cfg.Addr, handler.NewRouter(service.NewAuth(storage.NewUsers(pool), tokens), tokens, service.NewOrders(storage.NewOrders(pool))), logger)
 }
