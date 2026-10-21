@@ -16,10 +16,12 @@ CREATE TABLE orders (
  status TEXT NOT NULL DEFAULT 'NEW' CHECK (status IN ('NEW','PROCESSING','INVALID','PROCESSED')),
  accrual NUMERIC CHECK (accrual >= 0 AND accrual < 'Infinity'::numeric),
  uploaded_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ next_poll_at TIMESTAMPTZ NOT NULL DEFAULT now(),
  CHECK (status = 'PROCESSED' OR accrual IS NULL)
 );
 CREATE INDEX orders_user_uploaded_idx ON orders(user_id, uploaded_at DESC, number);
 CREATE INDEX orders_pending_idx ON orders(uploaded_at, number) WHERE status IN ('NEW','PROCESSING');
+CREATE INDEX orders_poll_idx ON orders(next_poll_at,number) WHERE status IN ('NEW','PROCESSING');
 CREATE TABLE withdrawals (
  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
  user_id BIGINT NOT NULL REFERENCES users(id),
