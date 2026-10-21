@@ -43,6 +43,12 @@ func (q *queueStub) Retry(ctx context.Context, n string, d time.Duration) error 
 	return q.err
 }
 
+func (q *queueStub) retryCount() int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.retries
+}
+
 type fetchStub struct {
 	mu     sync.Mutex
 	result model.Accrual
@@ -55,6 +61,11 @@ func (f *fetchStub) Get(ctx context.Context, n string) (model.Accrual, error) {
 	defer f.mu.Unlock()
 	f.calls++
 	return f.result, f.err
+}
+func (f *fetchStub) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
 }
 func TestWorkerStep(t *testing.T) {
 	for _, tt := range []struct {
@@ -112,20 +123,21 @@ func TestWorkerRunStopsBetweenPolls(t *testing.T) {
 		done := make(chan struct{})
 		go func() { defer close(done); w.Run(ctx) }()
 		synctest.Wait()
-		if f.calls != 1 || q.retries != 1 {
+		// Lock counter reads to synchronize them with writes in later polls.
+		if f.callCount() != 1 || q.retryCount() != 1 {
 			t.Fatal("initial poll did not finish")
 		}
 
 		// Advance fake time to just before the next poll.
 		time.Sleep(w.interval - time.Nanosecond)
 		synctest.Wait()
-		if f.calls != 1 || q.retries != 1 {
+		if f.callCount() != 1 || q.retryCount() != 1 {
 			t.Fatal("worker polled before the interval elapsed")
 		}
 
 		time.Sleep(time.Nanosecond)
 		synctest.Wait()
-		if f.calls != 2 || q.retries != 2 {
+		if f.callCount() != 2 || q.retryCount() != 2 {
 			t.Fatal("worker did not poll after the interval elapsed")
 		}
 
@@ -136,7 +148,7 @@ func TestWorkerRunStopsBetweenPolls(t *testing.T) {
 		default:
 			t.Fatal("worker did not stop between polls")
 		}
-		if f.calls != 2 || q.retries != 2 {
+		if f.callCount() != 2 || q.retryCount() != 2 {
 			t.Fatal("work continued after cancellation")
 		}
 	})
