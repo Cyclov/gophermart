@@ -85,11 +85,15 @@ func TestListOrdersResponse(t *testing.T) {
 	}
 }
 func TestOrderHandlersRejectMissingIdentity(t *testing.T) {
-	for _, h := range []http.HandlerFunc{uploadOrder(nil), listOrders(nil)} {
+	stub := &ordersStub{}
+	for _, h := range []http.HandlerFunc{uploadOrder(stub), listOrders(stub)} {
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, httptest.NewRequest("GET", "/", nil))
 		if w.Code != 401 {
 			t.Fatal("missing identity accepted")
+		}
+		if stub.called {
+			t.Fatal("service called without identity")
 		}
 	}
 }

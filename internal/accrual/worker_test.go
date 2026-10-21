@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/Cyclov/gophermart/internal/model"
@@ -18,6 +19,7 @@ type queueStub struct {
 	err              error
 	applied, retries int
 	delay            time.Duration
+	retryDelays      map[string]time.Duration
 }
 
 func (q *queueStub) Pending(ctx context.Context, limit int) ([]string, error) {
@@ -34,6 +36,10 @@ func (q *queueStub) Retry(ctx context.Context, n string, d time.Duration) error 
 	defer q.mu.Unlock()
 	q.retries++
 	q.delay = d
+	if q.retryDelays == nil {
+		q.retryDelays = make(map[string]time.Duration)
+	}
+	q.retryDelays[n] = d
 	return q.err
 }
 
@@ -76,52 +82,64 @@ func TestWorkerStep(t *testing.T) {
 	}
 }
 func TestWorkerCancellation(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	q := &queueStub{numbers: []string{"1"}}
-	f := new(fetchStub)
-	w := NewWorker(q, f, slog.New(slog.NewTextHandler(io.Discard, nil)), 1)
-	done := make(chan struct{})
-	go func() { w.Run(ctx); close(done) }()
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("worker did not stop")
-	}
-	if f.calls != 0 {
-		t.Fatal("cancelled worker fetched orders")
-	}
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		q := &queueStub{numbers: []string{"1"}}
+		f := new(fetchStub)
+		w := NewWorker(q, f, slog.New(slog.NewTextHandler(io.Discard, nil)), 1)
+		done := make(chan struct{})
+		go func() { defer close(done); w.Run(ctx) }()
+		synctest.Wait()
+		select {
+		case <-done:
+		default:
+			t.Fatal("worker did not stop")
+		}
+		if f.calls != 0 {
+			t.Fatal("cancelled worker fetched orders")
+		}
+	})
 }
 
-type cancelFetcher struct {
-	cancel context.CancelFunc
-	calls  int
-}
-
-func (f *cancelFetcher) Get(ctx context.Context, n string) (model.Accrual, error) {
-	f.calls++
-	if f.calls == 2 {
-		f.cancel()
-	}
-	return model.Accrual{}, ErrPending
-}
 func TestWorkerRunStopsBetweenPolls(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	q := &queueStub{numbers: []string{"123"}}
-	f := &cancelFetcher{cancel: cancel}
-	w := NewWorker(q, f, slog.New(slog.NewTextHandler(io.Discard, nil)), 1)
-	w.interval = time.Millisecond
-	done := make(chan struct{})
-	go func() { defer close(done); w.Run(ctx) }()
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("worker did not stop")
-	}
-	if f.calls != 2 || q.retries != 1 {
-		t.Fatal("unexpected polling lifecycle")
-	}
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		q := &queueStub{numbers: []string{"123"}}
+		f := &fetchStub{err: ErrPending}
+		w := NewWorker(q, f, slog.New(slog.NewTextHandler(io.Discard, nil)), 1)
+		done := make(chan struct{})
+		go func() { defer close(done); w.Run(ctx) }()
+		synctest.Wait()
+		if f.calls != 1 || q.retries != 1 {
+			t.Fatal("initial poll did not finish")
+		}
+
+		// Advance fake time to just before the next poll.
+		time.Sleep(w.interval - time.Nanosecond)
+		synctest.Wait()
+		if f.calls != 1 || q.retries != 1 {
+			t.Fatal("worker polled before the interval elapsed")
+		}
+
+		time.Sleep(time.Nanosecond)
+		synctest.Wait()
+		if f.calls != 2 || q.retries != 2 {
+			t.Fatal("worker did not poll after the interval elapsed")
+		}
+
+		cancel()
+		synctest.Wait()
+		select {
+		case <-done:
+		default:
+			t.Fatal("worker did not stop between polls")
+		}
+		if f.calls != 2 || q.retries != 2 {
+			t.Fatal("work continued after cancellation")
+		}
+	})
 }
 
 type poolFetcher struct {
@@ -144,51 +162,43 @@ func (f *poolFetcher) Get(ctx context.Context, number string) (model.Accrual, er
 	}
 }
 func TestWorkerPoolBoundAndDeduplication(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	f := &poolFetcher{started: make(chan string, 5), release: make(chan struct{}), seen: make(map[string]int)}
-	var once sync.Once
-	release := func() { once.Do(func() { close(f.release) }) }
-	defer release()
-	q := &queueStub{numbers: []string{"1", "2", "3", "4", "1"}}
-	w := NewWorker(q, f, slog.New(slog.NewTextHandler(io.Discard, nil)), 3)
-	done := make(chan struct{})
-	go func() { defer close(done); w.step(ctx) }()
-	defer func() {
-		cancel()
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		f := &poolFetcher{started: make(chan string, 5), release: make(chan struct{}), seen: make(map[string]int)}
+		var once sync.Once
+		release := func() { once.Do(func() { close(f.release) }) }
+		defer func() {
+			cancel()
+			release()
+			synctest.Wait()
+		}()
+		q := &queueStub{numbers: []string{"1", "2", "3", "4", "1"}}
+		w := NewWorker(q, f, slog.New(slog.NewTextHandler(io.Discard, nil)), 3)
+		done := make(chan struct{})
+		go func() { defer close(done); w.step(ctx) }()
+
+		// Let every available worker block in Get before checking the limit.
+		synctest.Wait()
+		if got := len(f.started); got != 3 {
+			t.Fatalf("concurrent requests = %d, want 3", got)
+		}
+
 		release()
+		synctest.Wait()
 		select {
 		case <-done:
-		case <-time.After(time.Second):
-			t.Error("pool did not stop")
+		default:
+			t.Fatal("batch did not finish")
 		}
-	}()
-	for i := 0; i < 3; i++ {
-		select {
-		case <-f.started:
-		case <-time.After(time.Second):
-			t.Fatal("requests are not parallel")
+		if len(f.seen) != 4 || q.applied != 4 {
+			t.Fatal("incorrect job count")
 		}
-	}
-	select {
-	case <-f.started:
-		t.Fatal("parallelism limit exceeded")
-	default:
-	}
-	release()
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("batch did not finish")
-	}
-	if len(f.seen) != 4 || q.applied != 4 {
-		t.Fatal("incorrect job count")
-	}
-	for number, count := range f.seen {
-		if count != 1 {
-			t.Fatalf("duplicate processing %s: %d", number, count)
+		for number, count := range f.seen {
+			if count != 1 {
+				t.Fatalf("duplicate processing %s: %d", number, count)
+			}
 		}
-	}
+	})
 }
 
 type rateFetcher struct {
@@ -218,60 +228,107 @@ func (f *rateFetcher) Get(ctx context.Context, number string) (model.Accrual, er
 	}
 }
 func TestWorkerPoolSharedRateLimit(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	f := &rateFetcher{blocked: make(chan struct{})}
-	q := &queueStub{numbers: []string{"rate", "blocked", "queued"}}
-	w := NewWorker(q, f, slog.New(slog.NewTextHandler(io.Discard, nil)), 2)
-	done := make(chan time.Duration, 1)
-	go func() { done <- w.step(ctx) }()
-	select {
-	case delay := <-done:
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		f := &rateFetcher{blocked: make(chan struct{})}
+		q := &queueStub{numbers: []string{"rate", "blocked", "queued"}}
+		w := NewWorker(q, f, slog.New(slog.NewTextHandler(io.Discard, nil)), 2)
+
+		delay := w.step(ctx)
 		if delay != time.Minute {
 			t.Fatalf("global pause %v", delay)
 		}
-	case <-time.After(time.Second):
-		cancel()
-		<-done
-		t.Fatal("rate limit did not cancel in-flight request")
-	}
-	if f.queued {
-		t.Fatal("queued request started after rate limit")
-	}
-	if q.retries != 2 {
-		t.Fatal("in-flight jobs not rescheduled")
-	}
+		if f.queued {
+			t.Fatal("queued request started after rate limit")
+		}
+		if q.retries != 2 {
+			t.Fatal("in-flight jobs not rescheduled")
+		}
+	})
 }
 func TestWorkerPoolCancellation(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	f := &poolFetcher{started: make(chan string, 4), release: make(chan struct{}), seen: make(map[string]int)}
-	q := &queueStub{numbers: []string{"1", "2", "3", "4"}}
-	w := NewWorker(q, f, slog.New(slog.NewTextHandler(io.Discard, nil)), 2)
-	done := make(chan struct{})
-	go func() { defer close(done); w.step(ctx) }()
-	defer func() {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer func() {
+			cancel()
+			synctest.Wait()
+		}()
+		f := &poolFetcher{started: make(chan string, 4), release: make(chan struct{}), seen: make(map[string]int)}
+		q := &queueStub{numbers: []string{"1", "2", "3", "4"}}
+		w := NewWorker(q, f, slog.New(slog.NewTextHandler(io.Discard, nil)), 2)
+		done := make(chan struct{})
+		go func() { defer close(done); w.step(ctx) }()
+
+		synctest.Wait()
+		if got := len(f.started); got != 2 {
+			t.Fatalf("started requests = %d, want 2", got)
+		}
 		cancel()
+		synctest.Wait()
 		select {
 		case <-done:
-		case <-time.After(time.Second):
-			t.Error("pool leaked")
+		default:
+			t.Fatal("in-flight requests not cancelled")
 		}
-	}()
-	for i := 0; i < 2; i++ {
+		if q.retries != 0 || q.applied != 0 || len(f.seen) != 2 {
+			t.Fatal("work continued after cancellation")
+		}
+	})
+}
+
+type concurrentRateFetcher struct {
+	started chan struct{}
+	release chan struct{}
+	delays  map[string]time.Duration
+}
+
+func (f *concurrentRateFetcher) Get(ctx context.Context, number string) (model.Accrual, error) {
+	f.started <- struct{}{}
+	<-f.release
+	return model.Accrual{}, &RateLimitError{Delay: f.delays[number]}
+}
+
+func TestWorkerPoolConcurrentRateLimits(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		f := &concurrentRateFetcher{
+			started: make(chan struct{}, 3),
+			release: make(chan struct{}),
+			delays:  map[string]time.Duration{"short": time.Second, "long": time.Minute},
+		}
+		var once sync.Once
+		release := func() { once.Do(func() { close(f.release) }) }
+		defer func() {
+			cancel()
+			release()
+			synctest.Wait()
+		}()
+		q := &queueStub{numbers: []string{"short", "long", "queued"}}
+		w := NewWorker(q, f, slog.New(slog.NewTextHandler(io.Discard, nil)), 2)
+		done := make(chan time.Duration, 1)
+		go func() { done <- w.step(ctx) }()
+		synctest.Wait()
+		if got := len(f.started); got != 2 {
+			t.Fatalf("started requests = %d, want 2", got)
+		}
+
+		// Both responses are already in flight when the first 429 cancels the batch.
+		release()
+		synctest.Wait()
 		select {
-		case <-f.started:
-		case <-time.After(time.Second):
-			t.Fatal("worker did not start")
+		case delay := <-done:
+			if delay != time.Minute {
+				t.Fatalf("global pause = %v, want %v", delay, time.Minute)
+			}
+		default:
+			t.Fatal("rate-limited batch did not finish")
 		}
-	}
-	cancel()
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("in-flight requests not cancelled")
-	}
-	if q.retries != 0 || q.applied != 0 || len(f.seen) != 2 {
-		t.Fatal("work continued after cancellation")
-	}
+		if q.retries != 2 || q.retryDelays["short"] != time.Second || q.retryDelays["long"] != time.Minute {
+			t.Fatalf("unexpected retry delays: %v", q.retryDelays)
+		}
+		if len(f.started) != 2 {
+			t.Fatal("queued request started after rate limit")
+		}
+	})
 }

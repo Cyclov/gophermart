@@ -31,7 +31,7 @@ func authEndpoint(auth AuthService, register bool) http.HandlerFunc {
 			return
 		}
 		var extra any
-		if err := decoder.Decode(&extra); err != io.EOF || strings.TrimSpace(input.Login) == "" || input.Password == "" {
+		if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) || strings.TrimSpace(input.Login) == "" || input.Password == "" {
 			http.Error(w, "invalid request", http.StatusBadRequest)
 			return
 		}

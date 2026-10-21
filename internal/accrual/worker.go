@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"sync"
 	"time"
 
 	"github.com/Cyclov/gophermart/internal/model"
+	"golang.org/x/sync/errgroup"
 )
 
 type Queue interface {
@@ -51,61 +51,56 @@ func (w *Worker) step(ctx context.Context) time.Duration {
 	if len(numbers) == 0 || ctx.Err() != nil {
 		return w.interval
 	}
-	batchCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	jobs := make(chan string)
-	var workers sync.WaitGroup
-	var pauseMu sync.Mutex
-	pause := w.interval
-	for i := 0; i < w.parallelism; i++ {
-		workers.Go(func() {
-			for {
-				select {
-				case <-batchCtx.Done():
-					return
-				case number, ok := <-jobs:
-					if !ok || batchCtx.Err() != nil {
-						return
-					}
-					result, err := w.client.Get(batchCtx, number)
-					if err == nil {
-						if err := w.queue.Apply(ctx, result, w.interval); err != nil {
-							w.logger.Error("cannot apply accrual result")
-						}
-						continue
-					}
-					delay := w.interval
-					var rate *RateLimitError
-					if errors.As(err, &rate) {
-						delay = max(delay, rate.Delay)
-						pauseMu.Lock()
-						pause = max(pause, delay)
-						pauseMu.Unlock()
-						cancel()
-					}
-					if ctx.Err() == nil {
-						if err := w.queue.Retry(ctx, number, delay); err != nil {
-							w.logger.Error("cannot schedule accrual retry")
-						}
-					}
-				}
-			}
-		})
-	}
+	group, batchCtx := errgroup.WithContext(ctx)
+	group.SetLimit(w.parallelism)
+	pollErrors := make([]error, len(numbers))
 	seen := make(map[string]struct{}, len(numbers))
-dispatch:
-	for _, number := range numbers {
+	for i, number := range numbers {
+		if batchCtx.Err() != nil {
+			break
+		}
 		if _, duplicate := seen[number]; duplicate {
 			continue
 		}
 		seen[number] = struct{}{}
-		select {
-		case <-batchCtx.Done():
-			break dispatch
-		case jobs <- number:
+		group.Go(func() error {
+			// Go may have waited for a slot while another request cancelled the batch.
+			if batchCtx.Err() != nil {
+				return nil
+			}
+			result, err := w.client.Get(batchCtx, number)
+			if err == nil {
+				if err := w.queue.Apply(ctx, result, w.interval); err != nil {
+					w.logger.Error("cannot apply accrual result")
+				}
+				return nil
+			}
+			pollErrors[i] = err
+			var rate *RateLimitError
+			if errors.As(err, &rate) {
+				return err
+			}
+			return nil
+		})
+	}
+	// Keep every failure, rather than only Wait's first error, to honor the longest Retry-After.
+	_ = group.Wait()
+	pause := w.interval
+	for i, err := range pollErrors {
+		if err == nil {
+			continue
+		}
+		delay := w.interval
+		var rate *RateLimitError
+		if errors.As(err, &rate) {
+			delay = max(delay, rate.Delay)
+			pause = max(pause, delay)
+		}
+		if ctx.Err() == nil {
+			if err := w.queue.Retry(ctx, numbers[i], delay); err != nil {
+				w.logger.Error("cannot schedule accrual retry")
+			}
 		}
 	}
-	close(jobs)
-	workers.Wait()
 	return pause
 }

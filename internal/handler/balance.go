@@ -61,7 +61,7 @@ func withdrawalResponse(balances BalanceService, id int64, w http.ResponseWriter
 		return
 	}
 	var extra any
-	if err := decoder.Decode(&extra); err != io.EOF {
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}

@@ -20,10 +20,16 @@ type balancesStub struct {
 	amount json.Number
 }
 
-func (s *balancesStub) Get(context.Context, int64) (model.Balance, error) {
+func (s *balancesStub) Get(ctx context.Context, id int64) (model.Balance, error) {
+	s.called = true
+	s.id = id
 	return model.Balance{Current: "0", Withdrawn: "0"}, s.err
 }
-func (s *balancesStub) History(context.Context, int64) ([]model.Withdrawal, error) { return nil, s.err }
+func (s *balancesStub) History(ctx context.Context, id int64) ([]model.Withdrawal, error) {
+	s.called = true
+	s.id = id
+	return nil, s.err
+}
 func (s *balancesStub) Withdraw(ctx context.Context, id int64, order string, amount json.Number) error {
 	s.called = true
 	s.id = id
@@ -83,11 +89,15 @@ func TestBalanceReadResponses(t *testing.T) {
 }
 
 func TestBalanceHandlersRejectMissingIdentity(t *testing.T) {
-	for _, h := range []http.HandlerFunc{getBalance(nil), withdraw(nil), listWithdrawals(nil)} {
+	stub := &balancesStub{}
+	for _, h := range []http.HandlerFunc{getBalance(stub), withdraw(stub), listWithdrawals(stub)} {
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, httptest.NewRequest("GET", "/", nil))
 		if w.Code != http.StatusUnauthorized {
 			t.Fatal("missing identity accepted")
+		}
+		if stub.called {
+			t.Fatal("service called without identity")
 		}
 	}
 }

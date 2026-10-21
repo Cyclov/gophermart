@@ -54,13 +54,22 @@ func run(logger *slog.Logger) error {
 	}
 	defer pool.Close()
 	logger.Info("database connected and migrations applied")
+	users := storage.NewUsers(pool)
 	orders := storage.NewOrders(pool)
-	worker := accrual.NewWorker(orders, accrual.NewClient(cfg.AccrualURL), logger, cfg.AccrualWorkers)
+	balances := storage.NewBalances(pool)
+
+	authService := service.NewAuth(users, tokens)
+	orderService := service.NewOrders(orders)
+	balanceService := service.NewBalances(balances)
+	router := handler.NewRouter(authService, tokens, orderService, balanceService)
+
+	accrualClient := accrual.NewClient(cfg.AccrualURL)
+	worker := accrual.NewWorker(orders, accrualClient, logger, cfg.AccrualWorkers)
 	workerCtx, cancelWorker := context.WithCancel(ctx)
 	defer cancelWorker()
 	workerDone := make(chan struct{})
 	go func() { defer close(workerDone); worker.Run(workerCtx) }()
-	err = server.Run(ctx, cfg.Addr, handler.NewRouter(service.NewAuth(storage.NewUsers(pool), tokens), tokens, service.NewOrders(orders), service.NewBalances(storage.NewBalances(pool))), logger)
+	err = server.Run(ctx, cfg.Addr, router, logger)
 	cancelWorker()
 	<-workerDone
 	return err
